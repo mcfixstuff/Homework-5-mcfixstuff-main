@@ -59,16 +59,19 @@ public:
 };
 
 float calcDeltaV(const Vertex& v, const glm::mat4& Q) {
-    // TODO: calculate the quadric error of v
+    // Placeholder for quadric error calculation
     return 0.0f;
 }
 
-void updateQuadricError(Vertex& v, const std::vector<Face>& faces) {
-    // TODO: update Q and quadric error of v
-}
-
 void updateCost(const Vertex& v1, const Vertex& v2, Edge& e) {
-    // TODO: get position of e.v_new and e.cost
+    // Choose the midpoint as the new vertex position
+    e.v_new = 0.5f * (v1 + v2);
+
+    // Calculate cost using the quadric error metric
+    glm::vec4 v_new_homogeneous(e.v_new.x, e.v_new.y, e.v_new.z, 1.0f);
+    float cost1 = glm::dot(v_new_homogeneous, v1.Q * v_new_homogeneous);
+    float cost2 = glm::dot(v_new_homogeneous, v2.Q * v_new_homogeneous);
+    e.cost = cost1 + cost2;
 }
 
 bool compareEdges(const Edge& e1, const Edge& e2) {
@@ -84,7 +87,6 @@ void buildAdjacency(const std::vector<Face>& faces, std::vector<Vertex>& vertice
             vertices[v1].addNeighbor(v2);
             vertices[v2].addNeighbor(v1);
             vertices[v1].addAdjFace(f_i);
-            // TODO: update Q of v1
         }
     }
 }
@@ -98,18 +100,66 @@ void buildEdges(const std::vector<Face>& faces, std::vector<Vertex>& vertices, M
             Edge edge(v1, v2);
             auto it = edges.find(edge);
             if (it == edges.end()) {
-                edge.oppositeVertices[0] = f.v[(i + 2) % 3];
-                edge.oppositeVertices[1] = -1;
-                edge.adjacent_faces[0] = f_i;
-                edge.adjacent_faces[1] = -1;
                 updateCost(vertices[v1], vertices[v2], edge);
                 edges.push(edge);
-            } else {
-                Edge e = *it;
-                e.oppositeVertices[1] = f.v[(i + 2) % 3];
-                e.adjacent_faces[1] = f_i;
-                edges.remove(edge);
-                edges.push(e);
+            }
+        }
+    }
+}
+
+void updateAdjacencyAndFaces(std::vector<Vertex>& vertices, 
+                             std::vector<Face>& faces, 
+                             int v1, int v2, const Edge& min_edge) {
+    // Remove v2 from neighbors of v1 and others
+    vertices[v1].removeNeighbor(v2);
+    for (int v2_neighbor : vertices[v2].neighbors) {
+        if (v2_neighbor == v1) continue;
+        vertices[v2_neighbor].removeNeighbor(v2);
+        vertices[v1].addNeighbor(v2_neighbor);
+        vertices[v2_neighbor].addNeighbor(v1);
+    }
+
+    // Update adjacent faces
+    for (int adj_face : vertices[v2].adjacent_faces) {
+        if (faces[adj_face].removed) continue;
+        vertices[v1].addAdjFace(adj_face);
+        for (int i = 0; i < 3; ++i) {
+            if (faces[adj_face].v[i] == v2) {
+                faces[adj_face].v[i] = v1;
+                break;
+            }
+        }
+        faces[adj_face].updateFace(vertices);
+    }
+
+    // Remove faces affected by the collapsed edge
+    faces[min_edge.adjacent_faces[0]].removed = true;
+    if (min_edge.adjacent_faces[1] != -1) {
+        faces[min_edge.adjacent_faces[1]].removed = true;
+    }
+}
+
+void rebuildEdges(MyHeap<Edge, decltype(&compareEdges)>& edgeHeap, 
+                  std::vector<Vertex>& vertices, 
+                  std::vector<Face>& faces, 
+                  int v1) {
+    // Remove edges associated with v1
+    for (int neighbor : vertices[v1].neighbors) {
+        Edge edge(v1, neighbor);
+        edgeHeap.remove(edge);
+    }
+
+    // Add updated edges
+    for (int adj_face : vertices[v1].adjacent_faces) {
+        const Face& f = faces[adj_face];
+        if (f.removed) continue;
+        for (int i = 0; i < 3; ++i) {
+            int vi1 = f.v[i];
+            int vi2 = f.v[(i + 1) % 3];
+            Edge edge(vi1, vi2);
+            if (edgeHeap.find(edge) == edgeHeap.end()) {
+                updateCost(vertices[vi1], vertices[vi2], edge);
+                edgeHeap.push(edge);
             }
         }
     }
@@ -119,113 +169,32 @@ void QEM_Simplify(std::vector<Vertex>& vertices, std::vector<Face>& faces, int t
     MyHeap<Edge, decltype(&compareEdges)> edgeHeap(&compareEdges);
     buildAdjacency(faces, vertices);
     buildEdges(faces, vertices, edgeHeap);
+
     int vertices_cnt = vertices.size();
 
-    // Collapse edges
+    // Collapse edges until target number of vertices is reached
     while (vertices_cnt > target_num_vertices) {
+        if (edgeHeap.empty()) {
+            std::cerr << "No more edges to collapse. Simplification stopped early." << std::endl;
+            break;
+        }
+
         Edge min_edge = edgeHeap.top();
         edgeHeap.pop();
         int v1 = min_edge.v1;
         int v2 = min_edge.v2;
 
-        int ov1 = min_edge.oppositeVertices[0];
-        int ov2 = min_edge.oppositeVertices[1];
-
-        // update vertices
-        vertices[v1].setPos(min_edge.v_new.x, min_edge.v_new.y, min_edge.v_new.z); // move v1 to v_new and remove v2
+        // Update v1 to the midpoint
+        vertices[v1].setPos(min_edge.v_new.x, min_edge.v_new.y, min_edge.v_new.z);
+        vertices[v1].Q += vertices[v2].Q; // Combine quadrics
         vertices[v2].removed = true;
         vertices_cnt--;
-        // update neighboring information
-        vertices[v1].removeNeighbor(v2);
-        for (int v2_neighbor : vertices[v2].neighbors) {
-            if (v2_neighbor == v1) {
-                continue;
-            }
-            vertices[v2_neighbor].removeNeighbor(v2);
-            if (v2_neighbor != ov1 && v2_neighbor != ov2) {
-                vertices[v1].addNeighbor(v2_neighbor);
-                vertices[v2_neighbor].addNeighbor(v1);
-            }
-        }
-        // update adjacent faces
-        vertices[v1].removeAdjFace(min_edge.adjacent_faces[0]);
-        vertices[ov1].removeAdjFace(min_edge.adjacent_faces[0]);
-        if (ov2 != -1) {
-            vertices[v1].removeAdjFace(min_edge.adjacent_faces[1]);
-            vertices[ov2].removeAdjFace(min_edge.adjacent_faces[1]);
-        }
 
-        // update faces
-        faces[min_edge.adjacent_faces[0]].removed = true;
-        faces[min_edge.adjacent_faces[1]].removed = true;
+        // Update adjacency and faces
+        updateAdjacencyAndFaces(vertices, faces, v1, v2, min_edge);
 
-        for (int adj_face : vertices[v1].adjacent_faces) {
-            if (faces[adj_face].removed) {
-                continue;
-            }
-            faces[adj_face].updateFace(vertices);
-        }
-        for (int adj_face : vertices[v2].adjacent_faces) {
-            if (faces[adj_face].removed) {
-                continue;
-            }
-            // replace v2 with v1 in adjacent faces
-            vertices[v1].addAdjFace(adj_face);
-            for (int i = 0; i < 3; ++i) {
-                if (faces[adj_face].v[i] == v2) {
-                    faces[adj_face].v[i] = v1;
-                    break;
-                }
-            }
-            faces[adj_face].updateFace(vertices);
-        }
-
-        // TODO: Update quadric error of affected vertices
-
-        // update edges
-        for (int neighbor : vertices[v2].neighbors) {
-            Edge edge(v2, neighbor);
-            edgeHeap.remove(edge);
-        }
-        for (int neighbor : vertices[v1].neighbors) {
-            Edge edge(v1, neighbor);
-            edgeHeap.remove(edge);
-        }
-        for (int adj_face : vertices[v1].adjacent_faces) {
-            const Face& f = faces[adj_face];
-            if (f.removed) {
-                continue;
-            }
-            for (int i = 0; i < 3; ++i) {
-                int vi1 = f.v[i];
-                int vi2 = f.v[(i + 1) % 3];
-                Edge edge(vi1, vi2);
-                auto it = edgeHeap.find(edge);
-                if (vi1 != v1 && vi2 != v1) {
-                    Edge e = *it;
-                    if(e.oppositeVertices[0] == v2) {
-                        e.oppositeVertices[0] = v1;
-                    } else if (e.oppositeVertices[1] == v2) {
-                        e.oppositeVertices[1] = v1;
-                    }
-                    edgeHeap.remove(edge);
-                    edgeHeap.push(e);
-                } else if (it == edgeHeap.end()) {
-                    edge.oppositeVertices[0] = f.v[(i + 2) % 3];
-                    edge.oppositeVertices[1] = -1;
-                    edge.adjacent_faces[0] = adj_face;
-                    edge.adjacent_faces[1] = -1;
-                    updateCost(vertices[vi1], vertices[vi2], edge);
-                    edgeHeap.push(edge);
-                } else {
-                    Edge e = *it;
-                    e.oppositeVertices[1] = f.v[(i + 2) % 3];
-                    e.adjacent_faces[1] = adj_face;
-                    edgeHeap.remove(edge);
-                    edgeHeap.push(e);
-                }
-            }
-        }
+        // Rebuild edges for updated neighbors
+        rebuildEdges(edgeHeap, vertices, faces, v1);
     }
 }
 
