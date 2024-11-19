@@ -39,21 +39,20 @@ void buildAdjacency(const std::vector<Face>& faces, std::vector<Vertex>& vertice
 
 // Function to compute new edge points
 void computeNewEdgePoints(const std::vector<Vertex>& vertices,
-                       std::set<Edge>& edges,
-                       std::vector<Vertex>& newVertices) {
-    for (auto it=edges.begin(); it!=edges.end(); ++it) {
+                          std::set<Edge>& edges,
+                          std::vector<Vertex>& newVertices) {
+    for (auto it = edges.begin(); it != edges.end(); ++it) {
         Edge e = *it;
         Vertex v1 = vertices[e.v1];
         Vertex v2 = vertices[e.v2];
         Vertex newEdgePoint;
 
-        // TODO: Compute new edge point
-        if (e.oppositeVertices[1] != -1) { 
-            // interior edge
+        if (e.oppositeVertices[1] != -1) { // Interior edge
             Vertex ov1 = vertices[e.oppositeVertices[0]];
             Vertex ov2 = vertices[e.oppositeVertices[1]];
-        } else {
-            // Boundary edge
+            newEdgePoint = (3.0f / 8.0f) * (v1 + v2) + (1.0f / 8.0f) * (ov1 + ov2);
+        } else { // Boundary edge
+            newEdgePoint = 0.5f * (v1 + v2);
         }
 
         int index = newVertices.size();
@@ -64,19 +63,51 @@ void computeNewEdgePoints(const std::vector<Vertex>& vertices,
     }
 }
 
+
 // Function to compute new positions for original vertices
 void updateOldVertices(const std::vector<Vertex>& oldVertices, std::vector<Vertex>& newVertices) {
     for (size_t i = 0; i < oldVertices.size(); ++i) {
-        // TODO: Compute new positions for old vertices, save the result in newVertices to avoid iterative update
+        const Vertex& oldVertex = oldVertices[i];
+        int n = oldVertex.neighbors.size();
+
+        float beta = (n > 3) ? (3.0f / (8.0f * n)) : (3.0f / 16.0f);
+
+        Vertex newPos = (1.0f - n * beta) * oldVertex;
+        for (int neighbor : oldVertex.neighbors) {
+            newPos += beta * oldVertices[neighbor];
+        }
+        newVertices[i] = newPos; // Update position
     }
 }
+
 
 // Function to build new subdivided faces
 void buildNewFaces(const std::vector<Face>& oldFaces, const std::set<Edge>& edges, std::vector<Face>& newFaces) {
     for (const Face& f : oldFaces) {
-        // TODO: Build new faces. hint: use (*edges.find(Edge(v1, v2))) to get an edge. The order of vertices in a face is important.
+        int v0 = f.v[0];
+        int v1 = f.v[1];
+        int v2 = f.v[2];
+
+        Edge e0(v0, v1);
+        Edge e1(v1, v2);
+        Edge e2(v2, v0);
+
+        const Edge& edge0 = *edges.find(e0);
+        const Edge& edge1 = *edges.find(e1);
+        const Edge& edge2 = *edges.find(e2);
+
+        int e0_id = edge0.new_edgepoint_id;
+        int e1_id = edge1.new_edgepoint_id;
+        int e2_id = edge2.new_edgepoint_id;
+
+        // Create four new faces
+        newFaces.emplace_back(v0, e0_id, e2_id);
+        newFaces.emplace_back(e0_id, v1, e1_id);
+        newFaces.emplace_back(e1_id, v2, e2_id);
+        newFaces.emplace_back(e0_id, e1_id, e2_id);
     }
 }
+
 
 int subdivideMesh(std::string inputFilename, std::string outputFilename) {
     std::vector<Vertex> vertices;
