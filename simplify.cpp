@@ -110,34 +110,37 @@ void buildEdges(const std::vector<Face>& faces, std::vector<Vertex>& vertices, M
 void updateAdjacencyAndFaces(std::vector<Vertex>& vertices, 
                              std::vector<Face>& faces, 
                              int v1, int v2, const Edge& min_edge) {
-    // Remove v2 from neighbors of v1 and others
     vertices[v1].removeNeighbor(v2);
+
     for (int v2_neighbor : vertices[v2].neighbors) {
         if (v2_neighbor == v1) continue;
+
         vertices[v2_neighbor].removeNeighbor(v2);
         vertices[v1].addNeighbor(v2_neighbor);
         vertices[v2_neighbor].addNeighbor(v1);
     }
 
-    // Update adjacent faces
     for (int adj_face : vertices[v2].adjacent_faces) {
         if (faces[adj_face].removed) continue;
+
         vertices[v1].addAdjFace(adj_face);
+
         for (int i = 0; i < 3; ++i) {
             if (faces[adj_face].v[i] == v2) {
                 faces[adj_face].v[i] = v1;
                 break;
             }
         }
+
         faces[adj_face].updateFace(vertices);
     }
 
-    // Remove faces affected by the collapsed edge
     faces[min_edge.adjacent_faces[0]].removed = true;
     if (min_edge.adjacent_faces[1] != -1) {
         faces[min_edge.adjacent_faces[1]].removed = true;
     }
 }
+
 
 void rebuildEdges(MyHeap<Edge, decltype(&compareEdges)>& edgeHeap, 
                   std::vector<Vertex>& vertices, 
