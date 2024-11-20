@@ -4,7 +4,16 @@ void Face::updateFace(const std::vector<Vertex>& vertices) {
     Vertex v0 = vertices[v[0]];
     Vertex v1 = vertices[v[1]];
     Vertex v2 = vertices[v[2]];
-    // TODO: Task 2, update other attributes of the face
+    // Compute the normal for the face
+    glm::vec3 edge1 = v1 - v0;
+    glm::vec3 edge2 = v2 - v0;
+    normal = glm::normalize(glm::cross(edge1, edge2));
+
+    // Calculate the plane equation: ax + by + cz + d = 0
+    d = -glm::dot(normal, v0);
+
+    // Compute the quadric matrix for the face
+    K_p = computeQuadricMatrix(normal.x, normal.y, normal.z, d);
 }
 
 glm::mat4 computeQuadricMatrix(float a, float b, float c, float d) {
